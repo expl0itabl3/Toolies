@@ -1,6 +1,6 @@
 # Toolies
 Ad hoc pentest stuff
 
-evil.ps1 == Invoke-Mimikatz.ps1
+evil.ps1 >> Invoke-Mimikatz.ps1
 
-Password = Password123!
+Password: Password123!
