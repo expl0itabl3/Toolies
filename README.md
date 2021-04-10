@@ -1,2 +1,2 @@
 # Toolies
-Ad hoc pentest stuff
+Ad hoc tool collection
