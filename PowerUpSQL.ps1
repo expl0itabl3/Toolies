@@ -17518,7 +17518,8 @@ Function  Get-SQLServerPasswordHash
                 [string]$_.PrincipalType,
                 $_.CreateDate,
                 [string]$_.DefaultDatabaseName,
-            [string]$_.PasswordHash)
+                [string](-join('0x0',(($_.PasswordHash).ToUpper().TrimStart("0X"))))
+                )
         }
 
         # Status user
@@ -22294,7 +22295,7 @@ Function Invoke-SQLAuditRoleDbOwner
                         {
                             # Check if user is already a sysadmin
                             $SysadminPreCheck = Get-SQLQuery -Instance $Instance -Username $Username -Password $Password -Credential $Credential -Query "SELECT IS_SRVROLEMEMBER('sysadmin','$CurrentLogin') as Status" -SuppressVerbose | Select-Object -Property Status -ExpandProperty Status
-                            if($SysadminPreCheck -eq 0)
+                            if($SysadminPreCheck -ne 1)
                             {
                                 # Status user
                                 Write-Verbose -Message "$Instance : - EXPLOITING: Verified that the current user ($CurrentLogin) is NOT a sysadmin."
@@ -22564,7 +22565,7 @@ Function Invoke-SQLAuditRoleDbDdlAdmin
                         {
                             # Check if user is already a sysadmin
                             $SysadminPreCheck = Get-SQLQuery -Instance $Instance -Username $Username -Password $Password -Credential $Credential -Query "SELECT IS_SRVROLEMEMBER('sysadmin','$CurrentLogin') as Status" -SuppressVerbose | Select-Object -Property Status -ExpandProperty Status
-                            if($SysadminPreCheck -eq 0)
+                            if($SysadminPreCheck -ne 1)
                             {
                                 # Status user
                                 Write-Verbose -Message "$Instance : - EXPLOITING: Verified that the current user ($CurrentLogin) is NOT a sysadmin."
@@ -22842,7 +22843,7 @@ Function Invoke-SQLAuditPrivImpersonateLogin
 
                         # Check if user is already a sysadmin
                         $SysadminPreCheck = Get-SQLQuery -Instance $Instance -Username $Username -Password $Password -Credential $Credential -Query "SELECT IS_SRVROLEMEMBER('sysadmin','$CurrentLogin') as Status" -SuppressVerbose | Select-Object -Property Status -ExpandProperty Status
-                        if($SysadminPreCheck -eq 0)
+                        if($SysadminPreCheck -ne 1)
                         {
                             # Status user
                             Write-Verbose -Message "$Instance : - EXPLOITING: Verified that the current user ($CurrentLogin) is NOT a sysadmin."
@@ -22880,7 +22881,7 @@ Function Invoke-SQLAuditPrivImpersonateLogin
 
                         # Check if user is already a sysadmin
                         $SysadminPreCheck = Get-SQLQuery -Instance $Instance -Username $Username -Password $Password -Credential $Credential -Query "SELECT IS_SRVROLEMEMBER('sysadmin','$CurrentLogin') as Status" -SuppressVerbose | Select-Object -Property Status -ExpandProperty Status
-                        if($SysadminPreCheck -eq 0)
+                        if($SysadminPreCheck -ne 1)
                         {
                             # Status user
                             Write-Verbose -Message "$Instance : - EXPLOITING: Verified that the current user ($CurrentLogin) is NOT a sysadmin."
