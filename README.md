@@ -1,2 +1,2 @@
 # Toolies
-Ad hoc tool collection
+Ad hoc collection of red team tools

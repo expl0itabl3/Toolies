@@ -1,4 +1,4 @@
-﻿#requires -version 2
+#requires -version 2
 <#
         File: PowerUpSQL.ps1
         Author: Scott Sutherland (@_nullbind), NetSPI - 2020
