@@ -1,4 +1,4 @@
-#requires -version 2
+﻿#requires -version 2
 <#
         File: PowerUpSQL.ps1
         Author: Scott Sutherland (@_nullbind), NetSPI - 2020
@@ -3613,7 +3613,7 @@ Function  Get-SQLServerInfo
             END
 
             -- Get SQL Server Service Account
-            DECLARE @ServiceaccountName varchar(250)
+            DECLARE @ServiceAccountName varchar(250)
             EXECUTE master.dbo.xp_instance_regread
             N'HKEY_LOCAL_MACHINE', @SQLServerInstance,
             N'ObjectName',@ServiceAccountName OUTPUT, N'no_output'
